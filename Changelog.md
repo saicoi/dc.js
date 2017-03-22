@@ -1,3 +1,22 @@
+## 2.1.4
+ * Simplified `capMixin.othersGrouper` default implementation by passing the rest of the items as well as those before the cap. This is possible because of [#934](https://github.com/dc-js/dc.js/issues/934) relying on sorting of `group.all()` instead of `group.top()`. The default implementation is now easy to understand and it should be easier to customize (if anyone should want to).
+ * Added example filtering segments of stack ([#657](https://github.com/dc-js/dc.js/issues/657))
+
+## 2.1.3
+ * 2.1.2 did not observe the common convention of having the rows/pie slices ordered from greatest to least - now we take from the front by default. ([#1296](https://github.com/dc-js/dc.js/issues/1296)
+ * Add [`takeFront`](http://dc-js.github.io/dc.js/docs/html/dc.capMixin.html#takeFront) option, defaulted true, in case you want to take from the back isntead.
+ * Remove `component.json`, since [component-js has been deprecated for a long time](https://github.com/componentjs/component/issues/639) (actually it got deprecated immediately after we added this in [#860](https://github.com/dc-js/dc.js/pull/860))
+
+## 2.1.2
+ * Lift `elasticRadius` from `bubbleChart` to `bubbleMixin`, making it available to `bubbleOverlay` ([#661](https://github.com/dc-js/dc.js/issues/661))
+Stop using `group.top()` in favor of `group.all()` sorting and slicing. ([#934](https://github.com/dc-js/dc.js/issues/934))
+ * Eliminate use of `group.top()` in cap mixin, by Macy Abbey ([#1184](https://github.com/dc-js/dc.js/pull/1184)). It already had to agree with `chart.ordering()` for the results to make sense.
+ * Eliminate `group.top()` in number display. This one is more problematic but probably less common. Although the number display now defaults ordering to `function (kv) { return kv.value; }`, applications which use a group with multiple bins with the number display, which were using `group.order()` to specify which bin should be displayed, must now specify `numberDisplay.ordering()` instead.
+ * Eliminate `group.top()` in bubble mixin, which was used to draw the bubbles in descending order of size, when the `group.order()` specified the radius. The bubble chart's `sortBubbleSize` is more general and is lifted to the mixin.
+
+## 2.1.1
+ * Merges 2.0.1
+
 ## 2.1.0
  * `dc.selectMenu`, implementing a `<select>` menu or multiple-select widget, by Andrea Singh ([#771](https://github.com/dc-js/dc.js/pull/771))
  * Heatmap allows customizing the ordering separately from the values, by Matt Traynham ([#869](https://github.com/dc-js/dc.js/pull/869) - thanks also to Quinn Lee for [#837](https://github.com/dc-js/dc.js/pull/837))
@@ -5,6 +24,9 @@
  * Functional-style filter handlers: instead of modifying the array of filters in-place, filter handlers must return the new filter array. This is consistent with the old documention, but a different implementation: any changes to the `filters` argument will be ignored unless they are returned. This should make filter handlers easier to reason about.
 
 # 2.0 Series
+## 2.0.1
+* `sans-serif` was specified as a string, which is invalid, by Kyle Doherty ([#1260](https://github.com/dc-js/dc.js/pull/1260))
+
 ## 2.0.0
 * xAxisPaddingUnit also applied to stacked charts, by Alexander Stillesjö ([#1234](https://github.com/dc-js/dc.js/pull/1234)
 * Limit zoom bounds - panning past the end should not cause brush to turn inside out. Thanks to Indri Muska for initial implementation and test ([#1026](https://github.com/dc-js/dc.js/pull/1026))
