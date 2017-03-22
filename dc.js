@@ -1,5 +1,5 @@
 /*!
- *  dc 2.1.0-dev
+ *  dc 2.1.4
  *  http://dc-js.github.io/dc.js/
  *  Copyright 2012-2016 Nick Zhu & the dc.js Developers
  *  https://github.com/dc-js/dc.js/blob/master/AUTHORS
@@ -29,7 +29,7 @@
  * such as {@link dc.baseMixin#svg .svg} and {@link dc.coordinateGridMixin#xAxis .xAxis},
  * return values that are themselves chainable d3 objects.
  * @namespace dc
- * @version 2.1.0-dev
+ * @version 2.1.4
  * @example
  * // Example chaining
  * chart.width(300)
@@ -38,7 +38,7 @@
  */
 /*jshint -W079*/
 var dc = {
-    version: '2.1.0-dev',
+    version: '2.1.4',
     constants: {
         CHART_CLASS: 'dc-chart',
         DEBUG_GROUP_CLASS: 'debug',
@@ -4400,27 +4400,20 @@ dc.stackMixin = function (_chart) {
  * @returns {dc.capMixin}
  */
 dc.capMixin = function (_chart) {
-
-    var _cap = Infinity;
-
+    var _cap = Infinity, _takeFront = true;
     var _othersLabel = 'Others';
 
-    var _othersGrouper = function (topRows) {
-        var topRowsSum = d3.sum(topRows, _chart.valueAccessor()),
-            allRows = _chart.group().all(),
-            allRowsSum = d3.sum(allRows, _chart.valueAccessor()),
-            topKeys = topRows.map(_chart.keyAccessor()),
-            allKeys = allRows.map(_chart.keyAccessor()),
-            topSet = d3.set(topKeys),
-            others = allKeys.filter(function (d) {return !topSet.has(d);});
-        if (allRowsSum > topRowsSum) {
-            return topRows.concat([{
-                'others': others,
-                'key': _chart.othersLabel(),
-                'value': allRowsSum - topRowsSum
+    var _othersGrouper = function (topItems, restItems) {
+        var restItemsSum = d3.sum(restItems, _chart.valueAccessor()),
+            restKeys = restItems.map(_chart.keyAccessor());
+        if (restItemsSum > 0) {
+            return topItems.concat([{
+                others: restKeys,
+                key: _chart.othersLabel(),
+                value: restItemsSum
             }]);
         }
-        return topRows;
+        return topItems;
     };
 
     _chart.cappedKeyAccessor = function (d, i) {
@@ -4437,16 +4430,30 @@ dc.capMixin = function (_chart) {
         return _chart.valueAccessor()(d, i);
     };
 
+    // return N "top" groups, where N is the cap, sorted by baseMixin.ordering
+    // whether top means front or back depends on takeFront
     _chart.data(function (group) {
         if (_cap === Infinity) {
             return _chart._computeOrderedGroups(group.all());
         } else {
-            var topRows = group.top(_cap); // ordered by crossfilter group order (default value)
-            topRows = _chart._computeOrderedGroups(topRows); // re-order using ordering (default key)
-            if (_othersGrouper) {
-                return _othersGrouper(topRows);
+            var items = group.all(), rest;
+            items = _chart._computeOrderedGroups(items); // sort by baseMixin.ordering
+
+            if (_cap) {
+                if (_takeFront) {
+                    rest = items.slice(_cap);
+                    items = items.slice(0, _cap);
+                } else {
+                    var start = Math.max(0, items.length - _cap);
+                    rest = items.slice(0, start);
+                    items = items.slice(start);
+                }
             }
-            return topRows;
+
+            if (_othersGrouper) {
+                return _othersGrouper(items, rest);
+            }
+            return items;
         }
     });
 
@@ -4454,6 +4461,25 @@ dc.capMixin = function (_chart) {
      * Get or set the count of elements to that will be included in the cap. If there is an
      * {@link dc.capMixin#othersGrouper othersGrouper}, any further elements will be combined in an
      * extra element with its name determined by {@link dc.capMixin#othersLabel othersLabel}.
+     *
+     * As of dc.js 2.1 and onward, the capped charts use
+     * {@link https://github.com/crossfilter/crossfilter/wiki/API-Reference#group_all group.all()}
+     * and {@link dc.baseMixin#ordering baseMixin.ordering()} to determine the order of
+     * elements. Then `cap` and {@link dc.capMixin#takeFront takeFront} determine how many elements
+     * to keep, from which end of the resulting array.
+     *
+     * **Migration note:** Up through dc.js 2.0.*, capping used
+     * {@link https://github.com/crossfilter/crossfilter/wiki/API-Reference#group_top group.top(N)},
+     * which selects the largest items according to
+     * {@link https://github.com/crossfilter/crossfilter/wiki/API-Reference#group_order group.order()}.
+     * The chart then sorted the items according to {@link dc.baseMixin#ordering baseMixin.ordering()}.
+     * So the two values essentially had to agree, but if the `group.order()` was incorrect (it's
+     * easy to forget about), the wrong rows or slices would be displayed, in the correct order.
+     *
+     * If your chart previously relied on `group.order()`, use `chart.ordering()` instead. If you
+     * actually want to cap by size but e.g. sort alphabetically by key, please
+     * [file an issue](https://github.com/dc-js/dc.js/issues/new) - it's still possible but we'll
+     * need to work up an example.
      * @method cap
      * @memberof dc.capMixin
      * @instance
@@ -4465,6 +4491,24 @@ dc.capMixin = function (_chart) {
             return _cap;
         }
         _cap = count;
+        return _chart;
+    };
+
+    /**
+     * Get or set the direction of capping. If set, the chart takes the first
+     * {@link dc.capMixin#cap cap} elements from the sorted array of elements; otherwise
+     * it takes the last `cap` elements.
+     * @method takeFront
+     * @memberof dc.capMixin
+     * @instance
+     * @param {Boolean} [takeFront=true]
+     * @returns {Boolean|dc.capMixin}
+     */
+    _chart.takeFront = function (takeFront) {
+        if (!arguments.length) {
+            return _takeFront;
+        }
+        _takeFront = takeFront;
         return _chart;
     };
 
@@ -4486,8 +4530,10 @@ dc.capMixin = function (_chart) {
 
     /**
      * Get or set the grouper function that will perform the insertion of data for the *Others* slice
-     * if the slices cap is specified. If set to a falsy value, no others will be added. By default the
-     * grouper function computes the sum of all values below the cap.
+     * if the slices cap is specified. If set to a falsy value, no others will be added.
+     *
+     * The grouper function takes an array of included ("top") items, and an array of the rest of
+     * the items. By default the grouper function computes the sum of the rest.
      * @method othersGrouper
      * @memberof dc.capMixin
      * @instance
@@ -4495,35 +4541,17 @@ dc.capMixin = function (_chart) {
      * // Do not show others
      * chart.othersGrouper(null);
      * // Default others grouper
-     * chart.othersGrouper(function (topRows) {
-     *    var topRowsSum = d3.sum(topRows, _chart.valueAccessor()),
-     *        allRows = _chart.group().all(),
-     *        allRowsSum = d3.sum(allRows, _chart.valueAccessor()),
-     *        topKeys = topRows.map(_chart.keyAccessor()),
-     *        allKeys = allRows.map(_chart.keyAccessor()),
-     *        topSet = d3.set(topKeys),
-     *        others = allKeys.filter(function (d) {return !topSet.has(d);});
-     *    if (allRowsSum > topRowsSum) {
-     *        return topRows.concat([{
-     *            'others': others,
-     *            'key': _chart.othersLabel(),
-     *            'value': allRowsSum - topRowsSum
-     *        }]);
-     *    }
-     *    return topRows;
-     * });
-     * // Custom others grouper
-     * chart.othersGrouper(function (data) {
-     *     // compute the value for others, presumably the sum of all values below the cap
-     *     var othersSum  = yourComputeOthersValueLogic(data)
-     *
-     *     // the keys are needed to properly filter when the others element is clicked
-     *     var othersKeys = yourComputeOthersKeysArrayLogic(data);
-     *
-     *     // add the others row to the dataset
-     *     data.push({'key': 'Others', 'value': othersSum, 'others': othersKeys });
-     *
-     *     return data;
+     * chart.othersGrouper(function (topItems, restItems) {
+     *     var restItemsSum = d3.sum(restItems, _chart.valueAccessor()),
+     *         restKeys = restItems.map(_chart.keyAccessor());
+     *     if (restItemsSum > 0) {
+     *         return topItems.concat([{
+     *             others: restKeys,
+     *             key: _chart.othersLabel(),
+     *             value: restItemsSum
+     *         }]);
+     *     }
+     *     return topItems;
      * });
      * @param {Function} [grouperFunction]
      * @returns {Function|dc.capMixin}
@@ -4558,6 +4586,8 @@ dc.capMixin = function (_chart) {
 dc.bubbleMixin = function (_chart) {
     var _maxBubbleRelativeSize = 0.3;
     var _minRadiusWithLabel = 10;
+    var _sortBubbleSize = false;
+    var _elasticRadius = false;
 
     _chart.BUBBLE_NODE_CLASS = 'node';
     _chart.BUBBLE_CLASS = 'bubble';
@@ -4568,7 +4598,13 @@ dc.bubbleMixin = function (_chart) {
     _chart.renderLabel(true);
 
     _chart.data(function (group) {
-        return group.top(Infinity);
+        var data = group.all();
+        if (_sortBubbleSize) {
+            // sort descending so smaller bubbles are on top
+            var radiusAccessor = _chart.radiusValueAccessor();
+            data.sort(function (a, b) { return d3.descending(radiusAccessor(a), radiusAccessor(b)); });
+        }
+        return data;
     });
 
     var _r = d3.scale.linear().domain([0, 100]);
@@ -4594,6 +4630,29 @@ dc.bubbleMixin = function (_chart) {
         }
         _r = bubbleRadiusScale;
         return _chart;
+    };
+
+    /**
+     * Turn on or off the elastic bubble radius feature, or return the value of the flag. If this
+     * feature is turned on, then bubble radii will be automatically rescaled to fit the chart better.
+     * @method elasticRadius
+     * @memberof dc.bubbleChart
+     * @instance
+     * @param {Boolean} [elasticRadius=false]
+     * @returns {Boolean|dc.bubbleChart}
+     */
+    _chart.elasticRadius = function (elasticRadius) {
+        if (!arguments.length) {
+            return _elasticRadius;
+        }
+        _elasticRadius = elasticRadius;
+        return _chart;
+    };
+
+    _chart.calculateRadiusDomain = function () {
+        if (_elasticRadius) {
+            _chart.r().domain([_chart.rMin(), _chart.rMax()]);
+        }
     };
 
     /**
@@ -4702,6 +4761,23 @@ dc.bubbleMixin = function (_chart) {
         if (_chart.renderTitle()) {
             g.select('title').text(titleFunction);
         }
+    };
+
+    /**
+     * Turn on or off the bubble sorting feature, or return the value of the flag. If enabled,
+     * bubbles will be sorted by their radius, with smaller bubbles in front.
+     * @method sortBubbleSize
+     * @memberof dc.bubbleChart
+     * @instance
+     * @param {Boolean} [sortBubbleSize=false]
+     * @returns {Boolean|dc.bubbleChart}
+     */
+    _chart.sortBubbleSize = function (sortBubbleSize) {
+        if (!arguments.length) {
+            return _sortBubbleSize;
+        }
+        _sortBubbleSize = sortBubbleSize;
+        return _chart;
     };
 
     /**
@@ -7162,9 +7238,6 @@ dc.dataGrid = function (parent, chartGroup) {
 dc.bubbleChart = function (parent, chartGroup) {
     var _chart = dc.bubbleMixin(dc.coordinateGridMixin({}));
 
-    var _elasticRadius = false;
-    var _sortBubbleSize = false;
-
     _chart.transitionDuration(750);
 
     _chart.transitionDelay(0);
@@ -7173,57 +7246,15 @@ dc.bubbleChart = function (parent, chartGroup) {
         return 'translate(' + (bubbleX(d)) + ',' + (bubbleY(d)) + ')';
     };
 
-    /**
-     * Turn on or off the elastic bubble radius feature, or return the value of the flag. If this
-     * feature is turned on, then bubble radii will be automatically rescaled to fit the chart better.
-     * @method elasticRadius
-     * @memberof dc.bubbleChart
-     * @instance
-     * @param {Boolean} [elasticRadius=false]
-     * @returns {Boolean|dc.bubbleChart}
-     */
-    _chart.elasticRadius = function (elasticRadius) {
-        if (!arguments.length) {
-            return _elasticRadius;
-        }
-        _elasticRadius = elasticRadius;
-        return _chart;
-    };
-
-    /**
-     * Turn on or off the bubble sorting feature, or return the value of the flag. If enabled,
-     * bubbles will be sorted by their radius, with smaller bubbles in front.
-     * @method sortBubbleSize
-     * @memberof dc.bubbleChart
-     * @instance
-     * @param {Boolean} [sortBubbleSize=false]
-     * @returns {Boolean|dc.bubbleChart}
-     */
-    _chart.sortBubbleSize = function (sortBubbleSize) {
-        if (!arguments.length) {
-            return _sortBubbleSize;
-        }
-        _sortBubbleSize = sortBubbleSize;
-        return _chart;
-    };
-
     _chart.plotData = function () {
-        if (_elasticRadius) {
-            _chart.r().domain([_chart.rMin(), _chart.rMax()]);
-        }
-
+        _chart.calculateRadiusDomain();
         _chart.r().range([_chart.MIN_RADIUS, _chart.xAxisLength() * _chart.maxBubbleRelativeSize()]);
 
         var data = _chart.data();
-        if (_sortBubbleSize) {
-            // sort descending so smaller bubbles are on top
-            var radiusAccessor = _chart.radiusValueAccessor();
-            data.sort(function (a, b) { return d3.descending(radiusAccessor(a), radiusAccessor(b)); });
-        }
         var bubbleG = _chart.chartBodyG().selectAll('g.' + _chart.BUBBLE_NODE_CLASS)
                 .data(data, function (d) { return d.key; });
-        if (_sortBubbleSize) {
-            // Call order here to update dom order based on sort
+        if (_chart.sortBubbleSize()) {
+            // update dom order based on sort
             bubbleG.order();
         }
 
@@ -8415,6 +8446,7 @@ dc.bubbleOverlay = function (parent, chartGroup) {
 
     function initializeBubbles () {
         var data = mapData();
+        _chart.calculateRadiusDomain();
 
         _points.forEach(function (point) {
             var nodeG = getNodeG(point, data);
@@ -8474,6 +8506,7 @@ dc.bubbleOverlay = function (parent, chartGroup) {
 
     function updateBubbles () {
         var data = mapData();
+        _chart.calculateRadiusDomain();
 
         _points.forEach(function (point) {
             var nodeG = getNodeG(point, data);
@@ -9677,6 +9710,9 @@ dc.numberDisplay = function (parent, chartGroup) {
     // dimension not required
     _chart._mandatoryAttributes(['group']);
 
+    // default to ordering by value, to emulate old group.top(1) behavior when multiple groups
+    _chart.ordering(function (kv) { return kv.value; });
+
     /**
      * Gets or sets an optional object specifying HTML templates to use depending on the number
      * displayed.  The text `%number` will be replaced with the current value.
@@ -9729,8 +9765,23 @@ dc.numberDisplay = function (parent, chartGroup) {
         return _chart.data();
     };
 
+    // probably unnecessary efficiency over computeOrderedGroups sort
+    function maxBin (all) {
+        if (all.length < 1) {
+            return null;
+        }
+        var maxi = 0, max = _chart.ordering()(all[0]);
+        for (var i = 1; i < all.length; ++i) {
+            var v = _chart.ordering()(all[i]);
+            if (v > max) {
+                max = v;
+                maxi = i;
+            }
+        }
+        return all[maxi];
+    }
     _chart.data(function (group) {
-        var valObj = group.value ? group.value() : group.top(1)[0];
+        var valObj = group.value ? group.value() : maxBin(group.all());
         return _chart.valueAccessor()(valObj);
     });
 
